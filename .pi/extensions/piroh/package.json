@@ -1,0 +1,11 @@
+{
+  "name": "piroh",
+  "private": true,
+  "dependencies": {
+    "@number0/iroh": "^0.35.0",
+    "cbor-x": "^1.6.0"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
