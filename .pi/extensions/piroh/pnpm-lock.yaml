@@ -1,0 +1,237 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@number0/iroh':
+        specifier: 0.31.0
+        version: 0.31.0
+      cbor-x:
+        specifier: ^1.6.0
+        version: 1.6.4
+
+packages:
+
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.2':
+    resolution: {integrity: sha512-ZKZ/F8US7JR92J4DMct6cLW/Y66o2K576+zjlEN/MevH70bFIsB10wkZEQPLzl2oNh2SMGy55xpJ9JoBRl5DOA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.2':
+    resolution: {integrity: sha512-32b1mgc+P61Js+KW9VZv/c+xRw5EfmOcPx990JbCBSkYJFY0l25VinvyyWfl+3KjibQmAcYwmyzKF9J4DyKP/Q==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.2':
+    resolution: {integrity: sha512-wfqgzqCAy/Vn8i6WVIh7qZd0DdBFaWBjPdB6ma+Wihcjv0gHqD/mw3ouVv7kbbUNrab6dKEx/w3xQZEdeXIlzg==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-linux-arm@2.2.2':
+    resolution: {integrity: sha512-tNg0za41TpQfkhWjptD+0gSD2fggMiDCSacuIeELyb2xZhr7PrhPe5h66Jc67B/5dmpIhI2QOUtv4SBsricyYQ==}
+    cpu: [arm]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-linux-x64@2.2.2':
+    resolution: {integrity: sha512-rpiLnVEsqtPJ+mXTdx1rfz4RtUGYIUg2rUAZgd1KjiC1SehYUSkJN7Yh+aVfSjvCGtVP0/bfkQkXpPXKbmSUaA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cbor-extract/cbor-extract-win32-x64@2.2.2':
+    resolution: {integrity: sha512-dI+9P7cfWxkTQ+oE+7Aa6onEn92PHgfWXZivjNheCRmTBDBf2fx6RyTi0cmgpYLnD1KLZK9ZYrMxaPZ4oiXhGA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@number0/iroh-android-arm-eabi@0.31.0':
+    resolution: {integrity: sha512-8MApcYfGos1+CIhDqCvQv4JmDJlnvEf95xMaMNKCUgq3CCLTkHAki9X9wJxyMuw2hciBC9jfqVIxnRdm+TdW5A==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [android]
+
+  '@number0/iroh-android-arm64@0.31.0':
+    resolution: {integrity: sha512-B8YSKIY+zLgP/nCmLQnLJuarivYpmO7R8miUZqEkZK7/6suBxzJ/bt1Y/xLu3PLNv8JDHBo5oSJnlkN4NlcRTg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@number0/iroh-darwin-arm64@0.31.0':
+    resolution: {integrity: sha512-XFtzDC9owkXwlq1042634nKruUl/xP7nGK0yKpL9kPzZ5vKvt0gkw/7EUzgmZvGxG1o9zrUEwIFU1j43KcY9OA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@number0/iroh-darwin-universal@0.31.0':
+    resolution: {integrity: sha512-iEgc4ohiu9GhTWX1F3JPTuyR/3AklHcJjIgt0Q212i2ryElwFB1r7C9w0UPRVGs7bI42SpBy4CgBMAxnYuzFOA==}
+    engines: {node: '>= 10'}
+    os: [darwin]
+
+  '@number0/iroh-linux-arm-gnueabihf@0.31.0':
+    resolution: {integrity: sha512-wUlIse080YDesfNpAO3sgSbD+t4Q0BOSs8mgVdguo+tL/NtbyfNa6e27vo0hdJE8lDNavmIcap4NZd0V587Pcg==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@number0/iroh-linux-arm-musleabihf@0.31.0':
+    resolution: {integrity: sha512-FpNJ6o4tUxDI0wg7BIbJw/9IUCN0lYwhC1xdAsmHQ75kmu76tRbspmzc8s+nTwGVZDWV0peokMqproVJOwIFgQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@number0/iroh-linux-arm64-gnu@0.31.0':
+    resolution: {integrity: sha512-eTcOM7YQSh2a8r70ub5fR6nT9NuFEB7xiYYMWVCMSc+V2/zP7WucddUfeAZA+r7mok7P9e3RpmPvneNd5AJRnQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@number0/iroh-linux-arm64-musl@0.31.0':
+    resolution: {integrity: sha512-lC2gwlEwDmkdj4QWB1fuJoyPnyDFN+xCtjfr6bnRRB0diBmKB7giUkX1/K+vtzZsEnxLBribko2Cn9D+/KLmWw==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@number0/iroh-linux-x64-gnu@0.31.0':
+    resolution: {integrity: sha512-jF/qy6UCBK6x3HHlYx837Mp1wcTPHkSantJ22iAviembjuPT94OR5wt1VLO4N1H32uiZtnTcMY1uTMz3oww50w==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@number0/iroh-linux-x64-musl@0.31.0':
+    resolution: {integrity: sha512-f416rpq6RXvrx+yMSukNYEGWV5FBoUAQrPjJyBbbLvewTfqwT5p7nlWVNri8mCe4vGN0T9Kq0QzpkrvdVsF4QQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@number0/iroh-win32-arm64-msvc@0.31.0':
+    resolution: {integrity: sha512-NoWNsQ4hNSa1MsI+0S4FHKg/HA4HJixVG3gGIdLi3+4M9Oe4EaxxE5+0eWQEi+qKeBjXThcVrsgxiBje2neLtA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@number0/iroh-win32-x64-msvc@0.31.0':
+    resolution: {integrity: sha512-7fUpMUZxoNYI4Db2Ea0NY89wi/dTJHn0btqGIDp0kRSYqicTtxtjcGeepRo56hBvKIBEqaOJyQVn5oQ4HSSrGA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@number0/iroh@0.31.0':
+    resolution: {integrity: sha512-cZ8VKPNbOAnyeVO9zSpHlLYPC1iQb5Tn/nnjpAXBH4VtFyJUZqX3kEv55W64uPYHVutRGQ45gVmc6vo641vYUQ==}
+    engines: {node: '>= 20.3.0'}
+
+  cbor-extract@2.2.2:
+    resolution: {integrity: sha512-hlSxxI9XO2yQfe9g6msd3g4xCfDqK5T5P0fRMLuaLHhxn4ViPrm+a+MUfhrvH2W962RGxcBwEGzLQyjbDG1gng==}
+    hasBin: true
+
+  cbor-x@1.6.4:
+    resolution: {integrity: sha512-UGKHjp6RHC6QuZ2yy5LCKm7MojM4716DwoSaqwQpaH4DvZvbBTGcoDNTiG9Y2lByXZYFEs9WRkS5tLl96IrF1Q==}
+
+  detect-libc@2.1.2:
+    resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
+    engines: {node: '>=8'}
+
+  node-gyp-build-optional-packages@5.1.1:
+    resolution: {integrity: sha512-+P72GAjVAbTxjjwUmwjVrqrdZROD4nf8KgpBoDxqXXTiYZZt/ud60dE5yvCSr9lRO8e8yv6kgJIC0K0PfZFVQw==}
+    hasBin: true
+
+snapshots:
+
+  '@cbor-extract/cbor-extract-darwin-arm64@2.2.2':
+    optional: true
+
+  '@cbor-extract/cbor-extract-darwin-x64@2.2.2':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-arm64@2.2.2':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-arm@2.2.2':
+    optional: true
+
+  '@cbor-extract/cbor-extract-linux-x64@2.2.2':
+    optional: true
+
+  '@cbor-extract/cbor-extract-win32-x64@2.2.2':
+    optional: true
+
+  '@number0/iroh-android-arm-eabi@0.31.0':
+    optional: true
+
+  '@number0/iroh-android-arm64@0.31.0':
+    optional: true
+
+  '@number0/iroh-darwin-arm64@0.31.0':
+    optional: true
+
+  '@number0/iroh-darwin-universal@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-arm-gnueabihf@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-arm-musleabihf@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-arm64-gnu@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-arm64-musl@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-x64-gnu@0.31.0':
+    optional: true
+
+  '@number0/iroh-linux-x64-musl@0.31.0':
+    optional: true
+
+  '@number0/iroh-win32-arm64-msvc@0.31.0':
+    optional: true
+
+  '@number0/iroh-win32-x64-msvc@0.31.0':
+    optional: true
+
+  '@number0/iroh@0.31.0':
+    optionalDependencies:
+      '@number0/iroh-android-arm-eabi': 0.31.0
+      '@number0/iroh-android-arm64': 0.31.0
+      '@number0/iroh-darwin-arm64': 0.31.0
+      '@number0/iroh-darwin-universal': 0.31.0
+      '@number0/iroh-linux-arm-gnueabihf': 0.31.0
+      '@number0/iroh-linux-arm-musleabihf': 0.31.0
+      '@number0/iroh-linux-arm64-gnu': 0.31.0
+      '@number0/iroh-linux-arm64-musl': 0.31.0
+      '@number0/iroh-linux-x64-gnu': 0.31.0
+      '@number0/iroh-linux-x64-musl': 0.31.0
+      '@number0/iroh-win32-arm64-msvc': 0.31.0
+      '@number0/iroh-win32-x64-msvc': 0.31.0
+
+  cbor-extract@2.2.2:
+    dependencies:
+      node-gyp-build-optional-packages: 5.1.1
+    optionalDependencies:
+      '@cbor-extract/cbor-extract-darwin-arm64': 2.2.2
+      '@cbor-extract/cbor-extract-darwin-x64': 2.2.2
+      '@cbor-extract/cbor-extract-linux-arm': 2.2.2
+      '@cbor-extract/cbor-extract-linux-arm64': 2.2.2
+      '@cbor-extract/cbor-extract-linux-x64': 2.2.2
+      '@cbor-extract/cbor-extract-win32-x64': 2.2.2
+    optional: true
+
+  cbor-x@1.6.4:
+    optionalDependencies:
+      cbor-extract: 2.2.2
+
+  detect-libc@2.1.2:
+    optional: true
+
+  node-gyp-build-optional-packages@5.1.1:
+    dependencies:
+      detect-libc: 2.1.2
+    optional: true
