@@ -123,11 +123,11 @@ export default function (pi: ExtensionAPI) {
   ): Promise<SnapshotMessage> {
     const rawEntries = ctx.sessionManager.getEntries() as Array<Record<string, unknown>>;
     const entries: WireEntry[] = rawEntries.map((e) => ({
+      ...e,
       id: String(e.id ?? ""),
       type: String(e.type ?? "message"),
       content: e.content,
       timestamp: (e.timestamp as number) ?? Date.now(),
-      ...e,
     }));
     const snapshot = buildSnapshot(entries, lastSeq);
     const frame = encodeFrame(encodeMessage(snapshot, state.encoding));
@@ -198,7 +198,7 @@ export default function (pi: ExtensionAPI) {
         readFromClient(ctx, stream).catch(() => {});
 
         // Watch for connection close
-        watchConnection(ctx, conn);
+        watchConnection(ctx, conn).catch(() => {});
       } catch {
         state.connState.transition("disconnected");
         updateStatus(ctx);
@@ -578,12 +578,13 @@ export default function (pi: ExtensionAPI) {
     readFromHost(ctx, stream).catch(() => {});
 
     // Watch for connection close
-    watchConnection(ctx, conn);
+    watchConnection(ctx, conn).catch(() => {});
   }
 
   // ── Reconnect logic with exponential backoff ──
   async function startReconnect(ctx: ExtensionContext): Promise<void> {
     if (state.mode !== "client" || !state.remoteId || !state.endpoint) return;
+    state.connState.resetRetries();
 
     while (state.connState.retryCount < 5 && state.mode === "client") {
       state.connState.transition("reconnecting");
@@ -671,6 +672,24 @@ export default function (pi: ExtensionAPI) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   pi.on("session_shutdown", async () => {
+    if (state.stream) {
+      try {
+        (state.stream as { send(): { finish(): void } }).send().finish();
+      } catch {
+        // Best effort
+      }
+      state.stream = null;
+    }
+    if (state.connection) {
+      try {
+        await (
+          state.connection as { close(code: bigint, reason: Buffer): Promise<void> }
+        ).close(BigInt(0), Buffer.from("shutdown"));
+      } catch {
+        // Best effort
+      }
+      state.connection = null;
+    }
     if (state.endpoint) {
       try {
         await (state.endpoint as { close(): Promise<void> }).close();
