@@ -542,15 +542,8 @@ export default function (pi: ExtensionAPI) {
       state.encoding
     ) as SnapshotMessage;
 
-    // Replay entries
-    for (const entry of snapshot.entries) {
-      pi.sendMessage({
-        customType: `piroh-${entry.type}`,
-        content: entry.content,
-        display: true,
-        details: entry.details ?? {},
-      });
-    }
+    // Snapshot received — just track the sequence number
+    // Don't replay entries as new messages; they're historical context only
     state.seq = snapshot.seq;
 
     // Now suppress local input and forward to host

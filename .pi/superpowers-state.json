@@ -27,13 +27,10 @@
     }
   },
   "tdd": {
-    "phase": "green",
-    "testFiles": [
-      "/Users/dangayle/src/piroh/__tests__/piroh/extension-integration.test.ts"
-    ],
+    "phase": "idle",
+    "testFiles": [],
     "sourceFiles": [
-      "/Users/dangayle/src/piroh/.pi/extensions/piroh/index.ts",
-      "/Users/dangayle/src/piroh/.pi/extensions/piroh/lib/connection.ts"
+      "/Users/dangayle/src/piroh/.pi/extensions/piroh/index.ts"
     ],
     "redVerificationPending": false
   },
@@ -43,7 +40,7 @@
     "fixAttempts": 0
   },
   "verification": {
-    "verified": true,
+    "verified": false,
     "verificationWaived": false
   }
 }
