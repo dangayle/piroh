@@ -37,10 +37,16 @@ type IrohVersion = "0.31" | "1.0";
 
 function detectVersion(): IrohVersion {
   const iroh = _require("@number0/iroh");
-  if (typeof iroh.Endpoint?.bind === "function") return "1.0";
-  if (typeof iroh.Iroh?.memory === "function") return "0.31";
+
+  // 0.31.x has Iroh.memory — 1.0.x dropped the Iroh class entirely.
+  // Check this first: Endpoint.bind collides with Function.prototype.bind.
+  if (iroh.Iroh && typeof iroh.Iroh.memory === "function") return "0.31";
+
+  // 1.0.x has Endpoint.prototype.id (instance method, no Function.prototype collision).
+  if (iroh.Endpoint?.prototype && typeof iroh.Endpoint.prototype.id === "function") return "1.0";
+
   throw new Error(
-    "Unknown @number0/iroh version — expected 0.31.x (Iroh.memory) or 1.0.x (Endpoint.bind)"
+    "Unknown @number0/iroh version — expected 0.31.x (Iroh.memory) or 1.0.x (Endpoint.prototype.id)"
   );
 }
 
