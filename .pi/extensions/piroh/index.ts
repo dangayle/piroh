@@ -467,15 +467,8 @@ export default function (pi: ExtensionAPI) {
           case "message-start":
           case "message-update":
           case "message-end":
-            // Extract content from the relayed message
-            const msgContent = (msg.message as Record<string, unknown>)?.content;
-            if (msgContent) {
-              pi.sendMessage({
-                customType: "piroh-msg",
-                content: msgContent,
-                display: true,
-              });
-            }
+            // Relay the message object directly from host
+            pi.sendMessage(msg.message as Parameters<typeof pi.sendMessage>[0]);
             break;
           case "tool-start":
           case "tool-update":
