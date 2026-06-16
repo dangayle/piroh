@@ -112,8 +112,11 @@ export class ConnectionState {
 
 interface Iroh031 {
   node: {
-    endpoint(): { nodeId(): string; connect(nodeAddr: { nodeId: string }, alpn: Uint8Array): Promise<unknown> };
+    endpoint(): { nodeId(): string; connect(nodeAddr: { nodeId: string; relayUrl?: string; addresses?: string[] }, alpn: Uint8Array): Promise<unknown> };
     shutdown(): Promise<void>;
+  };
+  net: {
+    nodeAddr(): Promise<{ nodeId: string; relayUrl?: string; addresses?: string[] }>;
   };
 }
 
@@ -128,6 +131,7 @@ interface Connecting031 {
 
 interface Endpoint100 {
   id(): { toString(): string };
+  addr(): unknown;
   bind?(options: Record<string, unknown>): Promise<Endpoint100>;
   connect(addr: { constructor: new (...args: unknown[]) => unknown }, alpn: number[]): Promise<unknown>;
   acceptNext(): Promise<Incoming100 | null>;
@@ -157,8 +161,11 @@ type RawRecvStream = unknown;
 
 export interface NodeHandle {
   nodeId(): string;
+  /** Returns a base64-encoded JSON blob containing the full address info
+   *  needed by a remote peer to connect (nodeId + relayUrl + addresses). */
+  getAddress(): Promise<string>;
   acceptConnection(): Promise<RawConnection>;
-  connectTo(remoteId: string): Promise<RawConnection>;
+  connectTo(address: string): Promise<RawConnection>;
   destroy(): Promise<void>;
 }
 
@@ -172,6 +179,11 @@ function create031Handle(endpoint031: Endpoint031, iroh031: Iroh031): NodeHandle
       return endpoint031.nodeId();
     },
 
+    async getAddress(): Promise<string> {
+      const addr = await iroh031.net.nodeAddr();
+      return Buffer.from(JSON.stringify(addr)).toString("base64");
+    },
+
     async acceptConnection(): Promise<RawConnection> {
       // acceptQueue is populated by the protocol handler
       return new Promise((resolve) => {
@@ -179,15 +191,30 @@ function create031Handle(endpoint031: Endpoint031, iroh031: Iroh031): NodeHandle
       });
     },
 
-    async connectTo(remoteId: string): Promise<RawConnection> {
-      // Validate node ID format to avoid native panics on invalid input.
-      // iroh 0.31 node IDs are 64-char hex strings (32 bytes).
-      if (!/^[0-9a-f]{64}$/i.test(remoteId)) {
-        throw new Error(
-          `Invalid node ID: "${remoteId}". Expected a 64-character hex string.`
-        );
+    async connectTo(address: string): Promise<RawConnection> {
+      // The address may be either:
+      //   1. A base64-encoded JSON blob (full NodeAddr from getAddress())
+      //   2. A bare 64-char hex node ID (legacy / manual entry)
+      let nodeAddr: { nodeId: string; relayUrl?: string; addresses?: string[] };
+
+      try {
+        const decoded = JSON.parse(Buffer.from(address, "base64").toString("utf-8"));
+        if (decoded && typeof decoded.nodeId === "string") {
+          nodeAddr = decoded;
+        } else {
+          throw new Error("not a valid address blob");
+        }
+      } catch {
+        // Not base64 JSON — treat as bare node ID
+        if (!/^[0-9a-f]{64}$/i.test(address)) {
+          throw new Error(
+            `Invalid address: "${address}". Expected a 64-character hex node ID or a base64-encoded address blob.`
+          );
+        }
+        nodeAddr = { nodeId: address };
       }
-      return endpoint031.connect({ nodeId: remoteId }, PIROH_ALPN);
+
+      return endpoint031.connect(nodeAddr, PIROH_ALPN);
     },
 
     async destroy(): Promise<void> {
@@ -237,6 +264,11 @@ function create100Handle(endpoint100: Endpoint100): NodeHandle {
       return endpoint100.id().toString();
     },
 
+    async getAddress(): Promise<string> {
+      const addr = endpoint100.addr();
+      return Buffer.from(JSON.stringify(addr)).toString("base64");
+    },
+
     async acceptConnection(): Promise<RawConnection> {
       // Loop until we get a connection with matching ALPN
       while (true) {
@@ -261,16 +293,30 @@ function create100Handle(endpoint100: Endpoint100): NodeHandle {
       }
     },
 
-    async connectTo(remoteId: string): Promise<RawConnection> {
-      // Validate node ID format defensively — prevents panics on garbage input.
-      // 1.0 EndpointId.fromString would error on malformed input, but we check
-      // early for a clearer error message.
-      if (!/^[0-9a-f]{64}$/i.test(remoteId)) {
+    async connectTo(address: string): Promise<RawConnection> {
+      // The address may be either:
+      //   1. A base64-encoded JSON blob (full address from getAddress())
+      //   2. A bare 64-char hex node ID (legacy / manual entry)
+      let nodeId: string;
+
+      try {
+        const decoded = JSON.parse(Buffer.from(address, "base64").toString("utf-8"));
+        if (decoded && typeof decoded.nodeId === "string") {
+          nodeId = decoded.nodeId;
+        } else {
+          throw new Error("not a valid address blob");
+        }
+      } catch {
+        // Not base64 JSON — treat as bare node ID
+        nodeId = address;
+      }
+
+      if (!/^[0-9a-f]{64}$/i.test(nodeId)) {
         throw new Error(
-          `Invalid node ID: "${remoteId}". Expected a 64-character hex string.`
+          `Invalid node ID: "${nodeId}". Expected a 64-character hex string.`
         );
       }
-      const addr = new EndpointAddr(EndpointId.fromString(remoteId));
+      const addr = new EndpointAddr(EndpointId.fromString(nodeId));
       return endpoint100.connect(addr, alpnBytes());
     },
 

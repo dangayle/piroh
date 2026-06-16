@@ -30,17 +30,18 @@
     "phase": "idle",
     "testFiles": [],
     "sourceFiles": [
-      "/Users/dangayle/src/piroh/.pi/extensions/piroh/lib/connection.ts"
+      "/Users/dangayle/src/piroh/.pi/extensions/piroh/lib/connection.ts",
+      "/Users/dangayle/src/piroh/.pi/extensions/piroh/index.ts"
     ],
     "redVerificationPending": false
   },
   "debug": {
     "active": false,
-    "investigated": true,
+    "investigated": false,
     "fixAttempts": 0
   },
   "verification": {
-    "verified": false,
+    "verified": true,
     "verificationWaived": false
   }
 }

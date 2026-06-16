@@ -376,9 +376,14 @@ export default function (pi: ExtensionAPI) {
       state.mode = "host";
       state.connState.transition("idle");
       const id = state.endpoint.nodeId();
+      const address = await state.endpoint.getAddress();
       updateStatus(ctx);
 
-      notify(ctx, `Hosting on ${id}\nShare this ID with the client.`, "info");
+      notify(
+        ctx,
+        `Hosting on ${id}\nConnect with: /iroh-connect ${address}`,
+        "info"
+      );
 
       // Start accept loop in background
       startHostLoop(ctx).catch((err: Error) => {
@@ -394,9 +399,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("iroh-connect", {
     description: "Connect to a remote Pi session over Iroh",
     handler: async (args: string, ctx: ExtensionContext) => {
-      const remoteId = args.trim();
-      if (!remoteId) {
-        notify(ctx, "Usage: /iroh-connect <EndpointId>", "error");
+      const address = args.trim();
+      if (!address) {
+        notify(ctx, "Usage: /iroh-connect <address blob or node ID>", "error");
         return;
       }
 
@@ -414,12 +419,12 @@ export default function (pi: ExtensionAPI) {
       }
 
       state.mode = "client";
-      state.remoteId = remoteId;
+      state.remoteId = address;
       state.connState.transition("connecting");
       updateStatus(ctx);
 
       try {
-        const conn = await state.endpoint.connectTo(remoteId);
+        const conn = await state.endpoint.connectTo(address);
         state.connection = conn;
         state.connState.transition("connected");
 
