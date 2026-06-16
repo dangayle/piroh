@@ -366,10 +366,47 @@ export async function createEndpoint(key: Uint8Array): Promise<NodeHandle> {
 // Stream helpers (return/accept Buffer uniformly)
 // ---------------------------------------------------------------------------
 
+/**
+ * Read one complete frame from a recv stream.
+ * Iroh 0.31/1.0 recv streams support readExact(buf) which reads exactly buf.length bytes.
+ *
+ * This function reads:
+ *   1. Exactly 4 bytes (frame length header)
+ *   2. Exactly that many payload bytes
+ *
+ * Returns a buffer containing both header + payload (total = 4 + length bytes).
+ * Returns empty buffer on EOF.
+ *
+ * Throws if a single frame exceeds sizeLimit.
+ */
 export async function readBuffer(recv: RawRecvStream, sizeLimit: number): Promise<Buffer> {
-  const s = recv as { readToEnd(n: number): Promise<Buffer | number[]> };
-  const result = await s.readToEnd(sizeLimit);
-  return Buffer.isBuffer(result) ? result : Buffer.from(result);
+  const s = recv as { readExact(buf: Uint8Array): Promise<void> };
+  
+  // Read frame header (4 bytes)
+  const header = Buffer.alloc(4);
+  try {
+    await s.readExact(header);
+  } catch (err: unknown) {
+    // EOF on header read = clean stream close
+    return Buffer.alloc(0);
+  }
+  
+  const length = header.readUint32BE(0);
+  if (length > sizeLimit) {
+    throw new Error(`Frame too large: ${length} > ${sizeLimit}`);
+  }
+  
+  // Read frame payload
+  const payload = Buffer.alloc(length);
+  try {
+    await s.readExact(payload);
+  } catch (err: unknown) {
+    // EOF in payload = truncated frame (error)
+    throw new Error(`Truncated frame: expected ${length} bytes, got EOF`);
+  }
+  
+  // Return header + payload together
+  return Buffer.concat([header, payload]);
 }
 
 export async function writeBuffer(send: RawSendStream, data: Buffer): Promise<void> {

@@ -122,6 +122,8 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify(msg, level);
   }
 
+
+
   // ── Helper: build and send snapshot ──
   async function sendSnapshot(
     stream: BiStream,
@@ -212,39 +214,33 @@ export default function (pi: ExtensionAPI) {
 
   // ── Read input frames from client (host side) ──
   async function readFromClient(ctx: ExtensionContext, stream: BiStream) {
-    let buffer = Buffer.alloc(0);
-
     while (state.mode === "host" && state.stream === stream) {
       try {
-        const chunk = await readBuffer(stream.recv, 65536);
-        if (!chunk || chunk.length === 0) continue;
+        // readBuffer returns one complete frame (or throws on EOF)
+        const frameBuf = await readBuffer(stream.recv, 65536);
+        if (frameBuf.length === 0) continue;  // EOF
 
-        buffer = Buffer.concat([buffer, chunk]);
+        const frameResult = decodeFrame(frameBuf);
+        if (!frameResult) continue;  // Malformed frame
 
-        let decodeResult = decodeFrame(buffer);
-        while (decodeResult !== null) {
-          const msg = decodeMessage(decodeResult.payload, state.encoding) as {
-            op: string;
-            text?: string;
-            images?: unknown[];
-          };
+        const msg = decodeMessage(frameResult.payload, state.encoding) as {
+          op: string;
+          text?: string;
+          images?: unknown[];
+        };
 
-          if (msg.op === "input") {
-            // Inject user message from client
-            await pi.sendUserMessage(msg.text ?? "");
-          } else if (msg.op === "disconnect") {
-            // Client disconnected gracefully
-            state.connState.transition("disconnected");
-            state.stream = null;
-            updateStatus(ctx);
-            return;
-          }
-
-          buffer = buffer.subarray(decodeResult.consumed);
-          decodeResult = decodeFrame(buffer);
+        if (msg.op === "input") {
+          // Inject user message from client
+          await pi.sendUserMessage(msg.text ?? "");
+        } else if (msg.op === "disconnect") {
+          // Client disconnected gracefully
+          state.connState.transition("disconnected");
+          state.stream = null;
+          updateStatus(ctx);
+          return;
         }
       } catch {
-        // Stream error — connection lost
+        // Stream error or EOF — connection lost
         break;
       }
     }
@@ -427,83 +423,79 @@ export default function (pi: ExtensionAPI) {
         const conn = await state.endpoint.connectTo(address);
         state.connection = conn;
         state.connState.transition("connected");
+        updateStatus(ctx);
 
         await setupClientStream(ctx, conn);
       } catch (err) {
         state.connState.transition("disconnected");
         state.mode = "idle";
         updateStatus(ctx);
-        notify(ctx, `Failed to connect: ${err}`, "error");
+        notify(ctx, `Failed to connect: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
 
   // ── Read output from host (client side) ──
   async function readFromHost(ctx: ExtensionContext, stream: BiStream) {
-    let buffer = Buffer.alloc(0);
-
     while (state.mode === "client" && state.stream === stream) {
       try {
-        const chunk = await readBuffer(stream.recv, 65536);
-        if (!chunk || chunk.length === 0) continue;
+        // readBuffer returns one complete frame (or throws on EOF)
+        const frameBuf = await readBuffer(stream.recv, 131072);
+        if (frameBuf.length === 0) continue;  // EOF
 
-        buffer = Buffer.concat([buffer, chunk]);
+        const frameResult = decodeFrame(frameBuf);
+        if (!frameResult) continue;  // Malformed frame
 
-        let decodeResult = decodeFrame(buffer);
-        while (decodeResult !== null) {
-          const msg = decodeMessage(decodeResult.payload, state.encoding) as {
-            op: string;
-            seq: number;
-            message?: unknown;
-            toolCallId?: string;
-            toolName?: string;
-            args?: unknown;
-            result?: unknown;
-            isError?: boolean;
-            partialResult?: unknown;
-          };
+        const msg = decodeMessage(frameResult.payload, state.encoding) as {
+          op: string;
+          seq: number;
+          message?: unknown;
+          toolCallId?: string;
+          toolName?: string;
+          args?: unknown;
+          result?: unknown;
+          isError?: boolean;
+          partialResult?: unknown;
+        };
 
-          state.seq = msg.seq;
+        state.seq = msg.seq;
 
-          switch (msg.op) {
-            case "snapshot":
-              // Already handled during connect; could arrive on reconnect
-              break;
-            case "message-start":
-            case "message-update":
-            case "message-end":
-              pi.sendMessage({
-                customType: "piroh-msg",
-                content: msg.message,
-                display: true,
-              });
-              break;
-            case "tool-start":
-            case "tool-update":
-            case "tool-end":
-              pi.sendMessage({
-                customType: "piroh-tool",
-                content: msg.result ?? msg.partialResult ?? "",
-                display: true,
-                details: {
-                  toolCallId: msg.toolCallId,
-                  toolName: msg.toolName,
-                },
-              });
-              break;
-            case "disconnect":
-              state.connState.transition("disconnected");
-              state.suppressInput = false;
-              state.stream = null;
-              updateStatus(ctx);
-              notify(ctx, "Host disconnected", "info");
-              return;
-          }
-
-          buffer = buffer.subarray(decodeResult.consumed);
-          decodeResult = decodeFrame(buffer);
+        switch (msg.op) {
+          case "snapshot":
+            // Already handled during connect; could arrive on reconnect
+            break;
+          case "message-start":
+          case "message-update":
+          case "message-end":
+            pi.sendMessage({
+              customType: "piroh-msg",
+              content: msg.message,
+              display: true,
+            });
+            break;
+          case "tool-start":
+          case "tool-update":
+          case "tool-end":
+            pi.sendMessage({
+              customType: "piroh-tool",
+              content: msg.result ?? msg.partialResult ?? "",
+              display: true,
+              details: {
+                toolCallId: msg.toolCallId,
+                toolName: msg.toolName,
+              },
+            });
+            break;
+          case "disconnect":
+            state.connState.transition("disconnected");
+            state.suppressInput = false;
+            state.stream = null;
+            updateStatus(ctx);
+            notify(ctx, "Host disconnected", "info");
+            return;
         }
       } catch {
+        // Stream error or EOF — connection closed
         break;
       }
     }
@@ -524,41 +516,42 @@ export default function (pi: ExtensionAPI) {
     const helloFrame = encodeFrame(encodeMessage(hello, "json"));
     await writeBuffer(stream.send, helloFrame);
 
-    // Read hello-ack
-    const recvBuf = await readBuffer(stream.recv, 65536);
-    const frameResult = decodeFrame(recvBuf);
-    if (frameResult) {
-      const ack = decodeMessage(frameResult.payload, "json") as {
-        op: string;
-        encoding: "cbor" | "json";
-      };
-      if (ack.op === "hello-ack") {
-        state.encoding = ack.encoding;
-      }
-    }
+    // Read hello-ack (readBuffer returns one complete frame)
+    let ackBuf = await readBuffer(stream.recv, 65536);
+    if (ackBuf.length === 0) throw new Error("Server closed connection before hello-ack");
+    
+    let frameResult = decodeFrame(ackBuf);
+    if (!frameResult) throw new Error("Failed to decode hello-ack frame");
+    
+    const ack = decodeMessage(frameResult.payload, "json") as {
+      op: string;
+      encoding: "cbor" | "json";
+    };
+    if (ack.op !== "hello-ack") throw new Error(`Expected hello-ack, got ${ack.op}`);
+    state.encoding = ack.encoding;
 
-    // Read snapshot and replay
-    let buffer = Buffer.alloc(0);
-    const snapshotBuf = await readBuffer(stream.recv, 131072);
-    buffer = Buffer.concat([buffer, snapshotBuf]);
-    const snapResult = decodeFrame(buffer);
-    if (snapResult) {
-      const snapshot = decodeMessage(
-        snapResult.payload,
-        state.encoding
-      ) as SnapshotMessage;
+    // Read snapshot frame
+    const snapBuf = await readBuffer(stream.recv, 131072);
+    if (snapBuf.length === 0) throw new Error("Server closed connection before sending snapshot");
+    
+    frameResult = decodeFrame(snapBuf);
+    if (!frameResult) throw new Error("Failed to decode snapshot frame");
+    
+    const snapshot = decodeMessage(
+      frameResult.payload,
+      state.encoding
+    ) as SnapshotMessage;
 
-      // Replay entries
-      for (const entry of snapshot.entries) {
-        pi.sendMessage({
-          customType: `piroh-${entry.type}`,
-          content: entry.content,
-          display: true,
-          details: entry.details ?? {},
-        });
-      }
-      state.seq = snapshot.seq;
+    // Replay entries
+    for (const entry of snapshot.entries) {
+      pi.sendMessage({
+        customType: `piroh-${entry.type}`,
+        content: entry.content,
+        display: true,
+        details: entry.details ?? {},
+      });
     }
+    state.seq = snapshot.seq;
 
     // Now suppress local input and forward to host
     state.suppressInput = true;
