@@ -1,11 +1,74 @@
+/**
+ * connection.ts — Iroh adapter for @number0/iroh 0.31.0 and 1.0.0
+ *
+ * Detects the installed version at runtime and normalises the API surface
+ * so index.ts never branches on version. The adapter covers:
+ *
+ *   - Node creation + shutdown
+ *   - Node ID retrieval
+ *   - Accepting incoming connections (host)
+ *   - Connecting to remote peers (client)
+ *   - Stream read/write (returns Buffer both ways)
+ *   - Connection close / closed()
+ *
+ * Public API (version-agnostic):
+ *   createEndpoint(key)          → NodeHandle
+ *   NodeHandle.nodeId()          → string
+ *   NodeHandle.acceptConnection() → Connection
+ *   NodeHandle.connectTo(remote)  → Connection
+ *   NodeHandle.destroy()          → void
+ *
+ *   readBuffer(recv, size)       → Buffer
+ *   writeBuffer(send, data)      → void
+ *   finishStream(send)           → void
+ *   closeConnection(conn, code, reason) → void
+ *   connectionClosed(conn)       → string
+ */
+
 import { createRequire } from "node:module";
 
 const _require = createRequire(import.meta.url);
 
-/**
- * Calculate exponential backoff delay in milliseconds.
- * Doubles each attempt with a cap at 16 seconds.
- */
+// ---------------------------------------------------------------------------
+// Version detection
+// ---------------------------------------------------------------------------
+
+type IrohVersion = "0.31" | "1.0";
+
+function detectVersion(): IrohVersion {
+  const iroh = _require("@number0/iroh");
+  if (typeof iroh.Endpoint?.bind === "function") return "1.0";
+  if (typeof iroh.Iroh?.memory === "function") return "0.31";
+  throw new Error(
+    "Unknown @number0/iroh version — expected 0.31.x (Iroh.memory) or 1.0.x (Endpoint.bind)"
+  );
+}
+
+const VERSION = detectVersion();
+
+// ---------------------------------------------------------------------------
+// ALPN
+// ---------------------------------------------------------------------------
+
+/** ALPN protocol identifier for piroh sessions: "piroh/session/0" */
+export const PIROH_ALPN = Buffer.from("piroh/session/0");
+
+function alpnBytes(): number[] {
+  return Array.from(PIROH_ALPN);
+}
+
+function buffersEqual(a: number[] | Uint8Array, b: number[] | Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Backoff + state machine (version-agnostic)
+// ---------------------------------------------------------------------------
+
 export function backoffDelay(attempt: number, baseMs = 1000, maxMs = 16000): number {
   const clamped = Math.max(1, attempt);
   const delay = baseMs * Math.pow(2, clamped - 1);
@@ -14,9 +77,6 @@ export function backoffDelay(attempt: number, baseMs = 1000, maxMs = 16000): num
 
 export type ConnState = "idle" | "connecting" | "connected" | "reconnecting" | "disconnected";
 
-/**
- * Simple state machine tracking the connection lifecycle.
- */
 export class ConnectionState {
   current: ConnState = "idle";
   retryCount = 0;
@@ -39,60 +99,170 @@ export class ConnectionState {
 }
 
 // ---------------------------------------------------------------------------
-// Iroh-specific wrappers
+// Type shims (subset of @number0/iroh types we depend on)
 // ---------------------------------------------------------------------------
 
-/** ALPN protocol identifier for piroh sessions: "piroh/session/0" */
-export const PIROH_ALPN = Buffer.from("piroh/session/0");
+// ---- 0.31 types ----
 
-/**
- * Internal queue of promise resolvers for {@link acceptPiroh}.
- * The protocol handler in {@link createEndpoint} pushes accepted
- * connections here, and each call to `acceptPiroh` pops one resolver.
- */
-const acceptQueue: Array<(connection: unknown) => void> = [];
-
-/**
- * Wait for the next incoming piroh connection.
- *
- * Returns a Promise that resolves with the accepted {@link Connection}
- * as soon as a connection matching the `PIROH_ALPN` protocol arrives.
- *
- * Connections that don't match the piroh ALPN are silently ignored.
- *
- * This function is designed to work alongside nodes created by
- * {@link createEndpoint} — its protocol handler feeds accepted
- * connections into the shared queue that `acceptPiroh` drains.
- */
-export function acceptPiroh(_endpoint?: unknown): Promise<unknown> {
-  return new Promise<unknown>((resolve) => {
-    acceptQueue.push(resolve);
-  });
-}
-
-type IrohBindings = {
-  Iroh: {
-    memory(opts?: Record<string, unknown>): Promise<unknown>;
-    persistent(path: string, opts?: Record<string, unknown>): Promise<unknown>;
+interface Iroh031 {
+  node: {
+    endpoint(): { nodeId(): string; connect(nodeAddr: { nodeId: string }, alpn: Uint8Array): Promise<unknown> };
+    shutdown(): Promise<void>;
   };
-  Endpoint: new () => unknown;
-  Connection: new () => unknown;
-};
-
-let _irohBindings: IrohBindings | null = null;
-
-function getIrohBindings(): IrohBindings {
-  if (!_irohBindings) {
-    _irohBindings = _require("@number0/iroh") as unknown as IrohBindings;
-  }
-  return _irohBindings;
 }
 
+type Endpoint031 = ReturnType<Iroh031["node"]["endpoint"]>;
+
+interface Connecting031 {
+  connect(): Promise<unknown>; // → Connection
+  alpn?(): Promise<Buffer>;
+}
+
+// ---- 1.0 types ----
+
+interface Endpoint100 {
+  id(): { toString(): string };
+  bind?(options: Record<string, unknown>): Promise<Endpoint100>;
+  connect(addr: { constructor: new (...args: unknown[]) => unknown }, alpn: number[]): Promise<unknown>;
+  acceptNext(): Promise<Incoming100 | null>;
+  close(): Promise<void>;
+}
+
+interface Incoming100 {
+  accept(): Promise<Accepting100>;
+  refuse(): Promise<void>;
+  ignore(): Promise<void>;
+}
+
+interface Accepting100 {
+  connect(): Promise<unknown>;
+  alpn(): Promise<number[]>;
+}
+
+// ---- Common ----
+
+type RawConnection = unknown;
+type RawSendStream = unknown;
+type RawRecvStream = unknown;
+
+// ---------------------------------------------------------------------------
+// Exported NodeHandle
+// ---------------------------------------------------------------------------
+
+export interface NodeHandle {
+  nodeId(): string;
+  acceptConnection(): Promise<RawConnection>;
+  connectTo(remoteId: string): Promise<RawConnection>;
+  destroy(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// 0.31 implementation
+// ---------------------------------------------------------------------------
+
+function create031Handle(endpoint031: Endpoint031, iroh031: Iroh031): NodeHandle {
+  return {
+    nodeId() {
+      return endpoint031.nodeId();
+    },
+
+    async acceptConnection(): Promise<RawConnection> {
+      // acceptQueue is populated by the protocol handler
+      return new Promise((resolve) => {
+        acceptQueue031.push(resolve);
+      });
+    },
+
+    async connectTo(remoteId: string): Promise<RawConnection> {
+      return endpoint031.connect({ nodeId: remoteId }, PIROH_ALPN);
+    },
+
+    async destroy(): Promise<void> {
+      await iroh031.node.shutdown();
+    },
+  };
+}
+
+/** Queue fed by the 0.31 protocol handler, drained by acceptConnection() */
+const acceptQueue031: Array<(conn: RawConnection) => void> = [];
+
 /**
- * Create or reuse a 32-byte secret key.
- * If `existing` is provided and 32 bytes, returns it unchanged.
- * Otherwise generates a new cryptographically random key.
+ * Build the 0.31 protocols map entry for our ALPN.
+ * The accept handler receives a Connecting (must call .connect() first).
  */
+function build031ProtocolHandler(): unknown {
+  const key = PIROH_ALPN.toString();
+  const handler = (_err: Error | null, _ep: Endpoint031) => ({
+    accept: async (err: Error | null, connecting: Connecting031) => {
+      if (err) return;
+      try {
+        const conn = await connecting.connect();
+        const resolve = acceptQueue031.shift();
+        if (resolve) resolve(conn);
+      } catch {
+        // Connection failed silently — acceptConnection will retry
+      }
+    },
+    shutdown: (_err: Error | null) => {
+      // no-op
+    },
+  });
+
+  return { [key]: handler };
+}
+
+// ---------------------------------------------------------------------------
+// 1.0 implementation
+// ---------------------------------------------------------------------------
+
+function create100Handle(endpoint100: Endpoint100): NodeHandle {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { EndpointId, EndpointAddr } = _require("@number0/iroh") as any;
+
+  return {
+    nodeId() {
+      return endpoint100.id().toString();
+    },
+
+    async acceptConnection(): Promise<RawConnection> {
+      // Loop until we get a connection with matching ALPN
+      while (true) {
+        const incoming = await endpoint100.acceptNext();
+        if (!incoming) continue;
+
+        try {
+          const accepting = await incoming.accept();
+          const gotAlpn = await accepting.alpn();
+
+          if (!buffersEqual(gotAlpn, alpnBytes())) {
+            // Wrong protocol — refuse and keep listening
+            await incoming.refuse();
+            continue;
+          }
+
+          return accepting.connect();
+        } catch {
+          // Accept failed — try next
+          continue;
+        }
+      }
+    },
+
+    async connectTo(remoteId: string): Promise<RawConnection> {
+      const addr = new EndpointAddr(EndpointId.fromString(remoteId));
+      return endpoint100.connect(addr, alpnBytes());
+    },
+
+    async destroy(): Promise<void> {
+      await endpoint100.close();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public factory: createEndpoint
+// ---------------------------------------------------------------------------
+
 export function loadOrGenerateKey(existing?: Uint8Array): Uint8Array {
   if (existing && existing.byteLength === 32) {
     return existing;
@@ -102,56 +272,71 @@ export function loadOrGenerateKey(existing?: Uint8Array): Uint8Array {
   return key;
 }
 
-export interface PirohAcceptCallback {
-  (connection: unknown): void;
-}
+export async function createEndpoint(key: Uint8Array): Promise<NodeHandle> {
+  if (VERSION === "1.0") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { Endpoint } = _require("@number0/iroh") as any;
+    const ep = (await Endpoint.bind({
+      secretKey: Array.from(key),
+      alpns: [alpnBytes()],
+    })) as Endpoint100;
+    return create100Handle(ep);
+  }
 
-/**
- * Create an iroh node with the piroh protocol handler.
- *
- * The returned object has a `.node.endpoint()` method for outgoing connections
- * and a `.net` client for address lookups.
- *
- * Incoming connections matching the piroh ALPN are forwarded to `onConnection`.
- */
-export async function createEndpoint(
-  key: Uint8Array,
-  onConnection?: (connection: unknown) => void
-): Promise<unknown> {
-  const { Iroh } = getIrohBindings();
-
-  const protocols: Record<string, (err: Error | null, ep: unknown) => { accept: (err: Error | null, conn: unknown) => void; shutdown?: (err: Error | null) => void }> = {};
-
-  // Use the Buffer's string representation as the key (same pattern as iroh test code)
-  protocols[PIROH_ALPN.toString()] = (_err: Error | null, _ep: unknown) => ({
-    accept: (err: Error | null, conn: unknown) => {
-      if (err) return;
-      if (onConnection) onConnection(conn);
-      // Drain any pending acceptPiroh resolvers
-      const resolve = acceptQueue.shift();
-      if (resolve) resolve(conn);
-    },
-    shutdown: (_err: Error | null) => {
-      // no-op for now
-    },
-  });
-
-  return Iroh.memory({
+  // 0.31
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { Iroh } = _require("@number0/iroh") as any;
+  const protocols = build031ProtocolHandler();
+  const iroh = (await Iroh.memory({
     secretKey: Array.from(key),
     protocols,
-  });
+  })) as Iroh031;
+  const endpoint = iroh.node.endpoint();
+  return create031Handle(endpoint, iroh);
 }
 
-/**
- * Connect to a remote piroh endpoint.
- *
- * @param endpoint - The local endpoint (from `iroh.node.endpoint()`).
- * @param remoteAddr - The remote node address (from `iroh.net.nodeAddr()`).
- * @returns The established QUIC connection.
- */
-export async function connectPiroh(
-  endpoint: { connect: (addr: unknown, alpn: Buffer) => Promise<unknown> },
-  remoteAddr: unknown
-): Promise<unknown> {
-  return endpoint.connect(remoteAddr, PIROH_ALPN);
+// ---------------------------------------------------------------------------
+// Stream helpers (return/accept Buffer uniformly)
+// ---------------------------------------------------------------------------
+
+export async function readBuffer(recv: RawRecvStream, sizeLimit: number): Promise<Buffer> {
+  const s = recv as { readToEnd(n: number): Promise<Buffer | number[]> };
+  const result = await s.readToEnd(sizeLimit);
+  return Buffer.isBuffer(result) ? result : Buffer.from(result);
+}
+
+export async function writeBuffer(send: RawSendStream, data: Buffer): Promise<void> {
+  // 0.31 takes Buffer/Uint8Array, 1.0 takes Array<number> — Array.from works for both
+  const s = send as { writeAll(buf: Uint8Array | number[]): Promise<void> };
+  await s.writeAll(VERSION === "1.0" ? Array.from(data) : data);
+}
+
+export async function finishStream(send: RawSendStream): Promise<void> {
+  const s = send as { finish(): Promise<void> };
+  await s.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Connection helpers
+// ---------------------------------------------------------------------------
+
+export function closeConnection(conn: RawConnection, code: bigint, reason: Buffer): void {
+  // close() is sync void in both versions; 1.0 takes Array<number> for reason
+  const c = conn as { close(code: bigint, reason: Uint8Array | number[]): void };
+  c.close(code, VERSION === "1.0" ? Array.from(reason) : reason);
+}
+
+export function connectionClosed(conn: RawConnection): Promise<string> {
+  const c = conn as { closed(): Promise<string> };
+  return c.closed();
+}
+
+export async function openBiStream(conn: RawConnection): Promise<{ send: RawSendStream; recv: RawRecvStream }> {
+  const c = conn as { openBi(): Promise<{ send: RawSendStream; recv: RawRecvStream }> };
+  return c.openBi();
+}
+
+export async function acceptBiStream(conn: RawConnection): Promise<{ send: RawSendStream; recv: RawRecvStream }> {
+  const c = conn as { acceptBi(): Promise<{ send: RawSendStream; recv: RawRecvStream }> };
+  return c.acceptBi();
 }

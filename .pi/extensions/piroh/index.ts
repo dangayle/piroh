@@ -13,28 +13,35 @@ import {
 } from "./lib/protocol";
 import { buildSnapshot, type WireEntry, type SnapshotMessage } from "./lib/session";
 import {
-  PIROH_ALPN,
   ConnectionState,
   createEndpoint,
-  acceptPiroh,
   loadOrGenerateKey,
-  backoffDelay,
-  connectPiroh,
+  readBuffer,
+  writeBuffer,
+  finishStream,
+  closeConnection,
+  connectionClosed,
+  openBiStream,
+  acceptBiStream,
+  type NodeHandle,
 } from "./lib/connection";
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
+/** A connected bidirectional stream — send + recv. */
+type BiStream = { send: unknown; recv: unknown };
+
 interface PirohState {
   /** Raw 32-byte secret key as Uint8Array. Persisted across sessions. */
   key: Uint8Array | null;
-  /** The iroh node/endpoint (from Iroh.memory()). Has .nodeId(), .connect(), .close(). */
-  endpoint: unknown | null;
+  /** Node handle — abstracts 0.31 / 1.0 endpoint creation, accept, connect, shutdown. */
+  endpoint: NodeHandle | null;
   /** Active QUIC connection to a remote peer. */
   connection: unknown | null;
   /** Open bidirectional stream over the connection. */
-  stream: unknown | null;
+  stream: BiStream | null;
   /** Negotiated frame encoding ("cbor" | "json"). */
   encoding: "cbor" | "json";
   /** Monotonic message sequence number. */
@@ -94,8 +101,8 @@ export default function (pi: ExtensionAPI) {
       if (c === "connected") {
         ctx.ui.setStatus("piroh", "host: client connected");
       } else {
-        const id = String((state.endpoint as { nodeId(): unknown }).nodeId?.() ?? "unknown");
-        ctx.ui.setStatus("piroh", `host: listening on ${String(id).slice(0, 12)}...`);
+        const id = state.endpoint ? state.endpoint.nodeId() : "unknown";
+        ctx.ui.setStatus("piroh", `host: listening on ${id.slice(0, 12)}...`);
       }
     } else if (state.mode === "client") {
       if (c === "connected") {
@@ -117,7 +124,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Helper: build and send snapshot ──
   async function sendSnapshot(
-    stream: { send(): { writeAll(data: Buffer): Promise<void> } },
+    stream: BiStream,
     ctx: ExtensionContext,
     lastSeq: number
   ): Promise<SnapshotMessage> {
@@ -131,19 +138,17 @@ export default function (pi: ExtensionAPI) {
     }));
     const snapshot = buildSnapshot(entries, lastSeq);
     const frame = encodeFrame(encodeMessage(snapshot, state.encoding));
-    await stream.send().writeAll(frame);
+    await writeBuffer(stream.send, frame);
     return snapshot;
   }
 
   // ── Helper: relay an output frame to the remote (host -> client) ──
-  async function relayFrame(ctx: ExtensionContext, op: string, data: Record<string, unknown>) {
+  async function relayFrame(_ctx: ExtensionContext, op: string, data: Record<string, unknown>) {
     if (!state.stream || state.mode !== "host") return;
     const seq = ++state.seq;
     const frame = encodeFrame(encodeMessage({ op, seq, ...data }, state.encoding));
     try {
-      await (state.stream as { send(): { writeAll(data: Buffer): Promise<void> } })
-        .send()
-        .writeAll(frame);
+      await writeBuffer(state.stream.send, frame);
     } catch {
       // Stream error — connection dropped, handled by watchConnection
     }
@@ -155,20 +160,19 @@ export default function (pi: ExtensionAPI) {
 
     while (state.mode === "host") {
       try {
-        const conn = (await acceptPiroh(state.endpoint)) as {
-          acceptBi(): Promise<{ send(): { writeAll(data: Buffer): Promise<void> }; recv(): { read(n: number): Promise<Buffer> } }>;
-          closed(): Promise<void>;
-        };
+        const conn = await state.endpoint.acceptConnection();
         state.connection = conn;
         state.connState.transition("connected");
 
         // Accept a bidirectional stream
-        const stream = await conn.acceptBi();
+        const stream = await acceptBiStream(conn);
         state.stream = stream;
         updateStatus(ctx);
 
         // ── Hello handshake ──
-        const recvBuf = await stream.recv().read(65536);
+        const recvBuf = await readBuffer(stream.recv, 65536);
+        if (recvBuf.length === 0) continue;
+
         const frameResult = decodeFrame(recvBuf);
         if (!frameResult) continue;
 
@@ -186,7 +190,7 @@ export default function (pi: ExtensionAPI) {
         );
         state.encoding = ack.encoding;
         const ackFrame = encodeFrame(encodeMessage(ack, "json"));
-        await stream.send().writeAll(ackFrame);
+        await writeBuffer(stream.send, ackFrame);
 
         // Send snapshot
         const snapshot = await sendSnapshot(stream, ctx, hello.lastSeq);
@@ -207,15 +211,12 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ── Read input frames from client (host side) ──
-  async function readFromClient(
-    ctx: ExtensionContext,
-    stream: { recv(): { read(n: number): Promise<Buffer> } }
-  ) {
+  async function readFromClient(ctx: ExtensionContext, stream: BiStream) {
     let buffer = Buffer.alloc(0);
 
     while (state.mode === "host" && state.stream === stream) {
       try {
-        const chunk = await stream.recv().read(65536);
+        const chunk = await readBuffer(stream.recv, 65536);
         if (!chunk || chunk.length === 0) continue;
 
         buffer = Buffer.concat([buffer, chunk]);
@@ -250,8 +251,8 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ── Watch connection for drop ──
-  async function watchConnection(ctx: ExtensionContext, conn: { closed(): Promise<void> }) {
-    await conn.closed();
+  async function watchConnection(ctx: ExtensionContext, conn: unknown) {
+    await connectionClosed(conn);
     if (state.connection === conn) {
       state.connection = null;
       state.stream = null;
@@ -341,11 +342,7 @@ export default function (pi: ExtensionAPI) {
             )
           );
           try {
-            await (
-              state.stream as { send(): { writeAll(data: Buffer): Promise<void> } }
-            )
-              .send()
-              .writeAll(frame);
+            await writeBuffer(state.stream.send, frame);
           } catch {
             // Connection lost
           }
@@ -378,9 +375,7 @@ export default function (pi: ExtensionAPI) {
       state.endpoint = await createEndpoint(state.key);
       state.mode = "host";
       state.connState.transition("idle");
-      const id = String(
-        (state.endpoint as { nodeId(): unknown }).nodeId()
-      );
+      const id = state.endpoint.nodeId();
       updateStatus(ctx);
 
       notify(ctx, `Hosting on ${id}\nShare this ID with the client.`, "info");
@@ -424,7 +419,7 @@ export default function (pi: ExtensionAPI) {
       updateStatus(ctx);
 
       try {
-        const conn = await connectPiroh(state.endpoint, remoteId);
+        const conn = await state.endpoint.connectTo(remoteId);
         state.connection = conn;
         state.connState.transition("connected");
 
@@ -439,15 +434,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── Read output from host (client side) ──
-  async function readFromHost(
-    ctx: ExtensionContext,
-    stream: { recv(): { read(n: number): Promise<Buffer> } }
-  ) {
+  async function readFromHost(ctx: ExtensionContext, stream: BiStream) {
     let buffer = Buffer.alloc(0);
 
     while (state.mode === "client" && state.stream === stream) {
       try {
-        const chunk = await stream.recv().read(65536);
+        const chunk = await readBuffer(stream.recv, 65536);
         if (!chunk || chunk.length === 0) continue;
 
         buffer = Buffer.concat([buffer, chunk]);
@@ -514,14 +506,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Set up client stream after connection (handshake, snapshot replay, readers) ──
   async function setupClientStream(ctx: ExtensionContext, conn: unknown): Promise<void> {
-    const c = conn as {
-      openBi(): Promise<{
-        send(): { writeAll(data: Buffer): Promise<void> };
-        recv(): { read(n: number): Promise<Buffer> };
-      }>;
-      closed(): Promise<void>;
-    };
-    const stream = await c.openBi();
+    const stream = await openBiStream(conn);
     state.stream = stream;
 
     // Send hello
@@ -532,10 +517,10 @@ export default function (pi: ExtensionAPI) {
       lastSeq: 0,
     };
     const helloFrame = encodeFrame(encodeMessage(hello, "json"));
-    await stream.send().writeAll(helloFrame);
+    await writeBuffer(stream.send, helloFrame);
 
     // Read hello-ack
-    const recvBuf = await stream.recv().read(65536);
+    const recvBuf = await readBuffer(stream.recv, 65536);
     const frameResult = decodeFrame(recvBuf);
     if (frameResult) {
       const ack = decodeMessage(frameResult.payload, "json") as {
@@ -549,7 +534,7 @@ export default function (pi: ExtensionAPI) {
 
     // Read snapshot and replay
     let buffer = Buffer.alloc(0);
-    const snapshotBuf = await stream.recv().read(131072);
+    const snapshotBuf = await readBuffer(stream.recv, 131072);
     buffer = Buffer.concat([buffer, snapshotBuf]);
     const snapResult = decodeFrame(buffer);
     if (snapResult) {
@@ -595,7 +580,7 @@ export default function (pi: ExtensionAPI) {
       await new Promise((resolve) => setTimeout(resolve, state.connState.backoffMs));
 
       try {
-        const conn = await connectPiroh(state.endpoint, state.remoteId);
+        const conn = await state.endpoint.connectTo(state.remoteId);
         state.connection = conn;
         state.connState.transition("connected");
 
@@ -634,14 +619,8 @@ export default function (pi: ExtensionAPI) {
               state.encoding
             )
           );
-          await (
-            state.stream as {
-              send(): { writeAll(data: Buffer): Promise<void>; finish(): void };
-            }
-          )
-            .send()
-            .writeAll(frame);
-          (state.stream as { send(): { finish(): void } }).send().finish();
+          await writeBuffer(state.stream.send, frame);
+          await finishStream(state.stream.send);
         } catch {
           // Already dead
         }
@@ -650,9 +629,7 @@ export default function (pi: ExtensionAPI) {
 
       if (state.connection) {
         try {
-          await (
-            state.connection as { close(code: bigint, reason: Buffer): Promise<void> }
-          ).close(BigInt(0), Buffer.from("user disconnect"));
+          closeConnection(state.connection, BigInt(0), Buffer.from("user disconnect"));
         } catch {
           // Already closed
         }
@@ -674,7 +651,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     if (state.stream) {
       try {
-        (state.stream as { send(): { finish(): void } }).send().finish();
+        await finishStream(state.stream.send);
       } catch {
         // Best effort
       }
@@ -682,9 +659,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (state.connection) {
       try {
-        await (
-          state.connection as { close(code: bigint, reason: Buffer): Promise<void> }
-        ).close(BigInt(0), Buffer.from("shutdown"));
+        closeConnection(state.connection, BigInt(0), Buffer.from("shutdown"));
       } catch {
         // Best effort
       }
@@ -692,7 +667,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (state.endpoint) {
       try {
-        await (state.endpoint as { close(): Promise<void> }).close();
+        await state.endpoint.destroy();
       } catch {
         // Best effort
       }

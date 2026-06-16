@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { backoffDelay, ConnectionState, acceptPiroh } from "../../.pi/extensions/piroh/lib/connection";
+import { backoffDelay, ConnectionState, loadOrGenerateKey, PIROH_ALPN } from "../../.pi/extensions/piroh/lib/connection";
 
 describe("connection", () => {
   describe("backoffDelay", () => {
@@ -67,25 +67,35 @@ describe("connection", () => {
     });
   });
 
-  describe("acceptPiroh", () => {
-    it("is exported and returns a Promise", () => {
-      const promise = acceptPiroh();
-      expect(promise).toBeInstanceOf(Promise);
+  describe("loadOrGenerateKey", () => {
+    it("generates a 32-byte key when called with no arguments", () => {
+      const key = loadOrGenerateKey();
+      expect(key).toBeInstanceOf(Uint8Array);
+      expect(key.byteLength).toBe(32);
     });
 
-    it("does not reject or resolve without a connection", async () => {
-      const promise = acceptPiroh();
-      // Give a tick for any immediate side effects
-      await new Promise((r) => setTimeout(r, 10));
-      // The promise should still be pending (not settled)
-      const winner = await Promise.race([
-        promise.then(
-          () => "resolved",
-          () => "rejected"
-        ),
-        new Promise((r) => setTimeout(() => r("timeout"), 50)),
-      ]);
-      expect(winner).toBe("timeout");
+    it("returns the existing key unchanged", () => {
+      const existing = new Uint8Array(32);
+      crypto.getRandomValues(existing);
+      const result = loadOrGenerateKey(existing);
+      expect(result).toBe(existing);
+    });
+
+    it("rejects keys that are not 32 bytes", () => {
+      const tooShort = new Uint8Array(16);
+      const result = loadOrGenerateKey(tooShort);
+      expect(result).not.toBe(tooShort);
+      expect(result.byteLength).toBe(32);
     });
   });
+
+  describe("PIROH_ALPN", () => {
+    it("is a Buffer with the expected protocol ID", () => {
+      expect(PIROH_ALPN).toBeInstanceOf(Buffer);
+      expect(PIROH_ALPN.toString()).toBe("piroh/session/0");
+    });
+  });
+
+  // NodeHandle.acceptConnection() and connectTo() are integration-tested —
+  // they need a running Iroh node and are covered by integration.test.ts.
 });
