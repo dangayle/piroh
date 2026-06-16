@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { backoffDelay, ConnectionState } from "../../.pi/extensions/piroh/lib/connection";
+import { backoffDelay, ConnectionState, acceptPiroh } from "../../.pi/extensions/piroh/lib/connection";
 
 describe("connection", () => {
   describe("backoffDelay", () => {
@@ -64,6 +64,28 @@ describe("connection", () => {
       state.incrementRetry(); // 2
       state.resetRetries();
       expect(state.retryCount).toBe(0);
+    });
+  });
+
+  describe("acceptPiroh", () => {
+    it("is exported and returns a Promise", () => {
+      const promise = acceptPiroh();
+      expect(promise).toBeInstanceOf(Promise);
+    });
+
+    it("does not reject or resolve without a connection", async () => {
+      const promise = acceptPiroh();
+      // Give a tick for any immediate side effects
+      await new Promise((r) => setTimeout(r, 10));
+      // The promise should still be pending (not settled)
+      const winner = await Promise.race([
+        promise.then(
+          () => "resolved",
+          () => "rejected"
+        ),
+        new Promise((r) => setTimeout(() => r("timeout"), 50)),
+      ]);
+      expect(winner).toBe("timeout");
     });
   });
 });

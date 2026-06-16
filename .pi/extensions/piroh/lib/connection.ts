@@ -45,6 +45,31 @@ export class ConnectionState {
 /** ALPN protocol identifier for piroh sessions: "piroh/session/0" */
 export const PIROH_ALPN = Buffer.from("piroh/session/0");
 
+/**
+ * Internal queue of promise resolvers for {@link acceptPiroh}.
+ * The protocol handler in {@link createEndpoint} pushes accepted
+ * connections here, and each call to `acceptPiroh` pops one resolver.
+ */
+const acceptQueue: Array<(connection: unknown) => void> = [];
+
+/**
+ * Wait for the next incoming piroh connection.
+ *
+ * Returns a Promise that resolves with the accepted {@link Connection}
+ * as soon as a connection matching the `PIROH_ALPN` protocol arrives.
+ *
+ * Connections that don't match the piroh ALPN are silently ignored.
+ *
+ * This function is designed to work alongside nodes created by
+ * {@link createEndpoint} — its protocol handler feeds accepted
+ * connections into the shared queue that `acceptPiroh` drains.
+ */
+export function acceptPiroh(_endpoint?: unknown): Promise<unknown> {
+  return new Promise<unknown>((resolve) => {
+    acceptQueue.push(resolve);
+  });
+}
+
 type IrohBindings = {
   Iroh: {
     memory(opts?: Record<string, unknown>): Promise<unknown>;
@@ -102,6 +127,9 @@ export async function createEndpoint(
     accept: (err: Error | null, conn: unknown) => {
       if (err) return;
       if (onConnection) onConnection(conn);
+      // Drain any pending acceptPiroh resolvers
+      const resolve = acceptQueue.shift();
+      if (resolve) resolve(conn);
     },
     shutdown: (_err: Error | null) => {
       // no-op for now
