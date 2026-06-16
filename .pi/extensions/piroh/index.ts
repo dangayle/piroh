@@ -3,16 +3,8 @@ import { createRequire } from "node:module";
 
 const _require = createRequire(import.meta.url);
 
-const CBOR_AVAILABLE = (() => {
-  try {
-    _require.resolve("cbor-x");
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
 import {
+  CBOR_AVAILABLE,
   encodeFrame,
   encodeMessage,
   decodeFrame,
@@ -26,6 +18,8 @@ import {
   createEndpoint,
   acceptPiroh,
   loadOrGenerateKey,
+  backoffDelay,
+  connectPiroh,
 } from "./lib/connection";
 
 // ---------------------------------------------------------------------------
@@ -222,7 +216,7 @@ export default function (pi: ExtensionAPI) {
     while (state.mode === "host" && state.stream === stream) {
       try {
         const chunk = await stream.recv().read(65536);
-        if (!chunk) continue;
+        if (!chunk || chunk.length === 0) continue;
 
         buffer = Buffer.concat([buffer, chunk]);
 
@@ -261,8 +255,12 @@ export default function (pi: ExtensionAPI) {
     if (state.connection === conn) {
       state.connection = null;
       state.stream = null;
-      state.connState.transition("idle");
+      state.connState.transition("disconnected");
       updateStatus(ctx);
+      // If in client mode, attempt reconnection with backoff
+      if (state.mode === "client" && state.remoteId && state.endpoint) {
+        startReconnect(ctx).catch(() => {});
+      }
     }
   }
 
@@ -426,79 +424,11 @@ export default function (pi: ExtensionAPI) {
       updateStatus(ctx);
 
       try {
-        const endpoint = state.endpoint as {
-          connect(addr: string, alpn: Buffer): Promise<{
-            openBi(): Promise<{
-              send(): { writeAll(data: Buffer): Promise<void> };
-              recv(): { read(n: number): Promise<Buffer> };
-            }>;
-            closed(): Promise<void>;
-          }>;
-        };
-
-        const conn = await endpoint.connect(remoteId, PIROH_ALPN);
+        const conn = await connectPiroh(state.endpoint, remoteId);
         state.connection = conn;
         state.connState.transition("connected");
 
-        // Open bidirectional stream
-        const stream = await conn.openBi();
-        state.stream = stream;
-
-        // Send hello
-        const hello = {
-          op: "hello" as const,
-          version: 0,
-          encoding: (CBOR_AVAILABLE ? "cbor" : "json") as "cbor" | "json",
-          lastSeq: 0,
-        };
-        const helloFrame = encodeFrame(encodeMessage(hello, "json"));
-        await stream.send().writeAll(helloFrame);
-
-        // Read hello-ack
-        const recvBuf = await stream.recv().read(65536);
-        const frameResult = decodeFrame(recvBuf);
-        if (frameResult) {
-          const ack = decodeMessage(frameResult.payload, "json") as {
-            op: string;
-            encoding: "cbor" | "json";
-          };
-          if (ack.op === "hello-ack") {
-            state.encoding = ack.encoding;
-          }
-        }
-
-        // Read snapshot and replay
-        let buffer = Buffer.alloc(0);
-        const snapshotBuf = await stream.recv().read(131072);
-        buffer = Buffer.concat([buffer, snapshotBuf]);
-        const snapResult = decodeFrame(buffer);
-        if (snapResult) {
-          const snapshot = decodeMessage(
-            snapResult.payload,
-            state.encoding
-          ) as SnapshotMessage;
-
-          // Replay entries
-          for (const entry of snapshot.entries) {
-            pi.sendMessage({
-              customType: `piroh-${entry.type}`,
-              content: entry.content,
-              display: true,
-              details: entry.details ?? {},
-            });
-          }
-          state.seq = snapshot.seq;
-        }
-
-        // Now suppress local input and forward to host
-        state.suppressInput = true;
-        updateStatus(ctx);
-
-        // Start reading output from host in background
-        readFromHost(ctx, stream).catch(() => {});
-
-        // Watch for connection close
-        watchConnection(ctx, conn);
+        await setupClientStream(ctx, conn);
       } catch (err) {
         state.connState.transition("disconnected");
         state.mode = "idle";
@@ -518,7 +448,7 @@ export default function (pi: ExtensionAPI) {
     while (state.mode === "client" && state.stream === stream) {
       try {
         const chunk = await stream.recv().read(65536);
-        if (!chunk) continue;
+        if (!chunk || chunk.length === 0) continue;
 
         buffer = Buffer.concat([buffer, chunk]);
 
@@ -580,6 +510,106 @@ export default function (pi: ExtensionAPI) {
         break;
       }
     }
+  }
+
+  // ── Set up client stream after connection (handshake, snapshot replay, readers) ──
+  async function setupClientStream(ctx: ExtensionContext, conn: unknown): Promise<void> {
+    const c = conn as {
+      openBi(): Promise<{
+        send(): { writeAll(data: Buffer): Promise<void> };
+        recv(): { read(n: number): Promise<Buffer> };
+      }>;
+      closed(): Promise<void>;
+    };
+    const stream = await c.openBi();
+    state.stream = stream;
+
+    // Send hello
+    const hello = {
+      op: "hello" as const,
+      version: 0,
+      encoding: (CBOR_AVAILABLE ? "cbor" : "json") as "cbor" | "json",
+      lastSeq: 0,
+    };
+    const helloFrame = encodeFrame(encodeMessage(hello, "json"));
+    await stream.send().writeAll(helloFrame);
+
+    // Read hello-ack
+    const recvBuf = await stream.recv().read(65536);
+    const frameResult = decodeFrame(recvBuf);
+    if (frameResult) {
+      const ack = decodeMessage(frameResult.payload, "json") as {
+        op: string;
+        encoding: "cbor" | "json";
+      };
+      if (ack.op === "hello-ack") {
+        state.encoding = ack.encoding;
+      }
+    }
+
+    // Read snapshot and replay
+    let buffer = Buffer.alloc(0);
+    const snapshotBuf = await stream.recv().read(131072);
+    buffer = Buffer.concat([buffer, snapshotBuf]);
+    const snapResult = decodeFrame(buffer);
+    if (snapResult) {
+      const snapshot = decodeMessage(
+        snapResult.payload,
+        state.encoding
+      ) as SnapshotMessage;
+
+      // Replay entries
+      for (const entry of snapshot.entries) {
+        pi.sendMessage({
+          customType: `piroh-${entry.type}`,
+          content: entry.content,
+          display: true,
+          details: entry.details ?? {},
+        });
+      }
+      state.seq = snapshot.seq;
+    }
+
+    // Now suppress local input and forward to host
+    state.suppressInput = true;
+    updateStatus(ctx);
+
+    // Start reading output from host in background
+    readFromHost(ctx, stream).catch(() => {});
+
+    // Watch for connection close
+    watchConnection(ctx, conn);
+  }
+
+  // ── Reconnect logic with exponential backoff ──
+  async function startReconnect(ctx: ExtensionContext): Promise<void> {
+    if (state.mode !== "client" || !state.remoteId || !state.endpoint) return;
+
+    while (state.connState.retryCount < 5 && state.mode === "client") {
+      state.connState.transition("reconnecting");
+      state.connState.incrementRetry();
+      updateStatus(ctx);
+
+      // Wait with backoff
+      await new Promise((resolve) => setTimeout(resolve, state.connState.backoffMs));
+
+      try {
+        const conn = await connectPiroh(state.endpoint, state.remoteId);
+        state.connection = conn;
+        state.connState.transition("connected");
+
+        await setupClientStream(ctx, conn);
+        return; // Success
+      } catch {
+        // Will retry if under maxRetries
+      }
+    }
+
+    // All retries exhausted
+    state.connState.transition("disconnected");
+    state.mode = "idle";
+    updateStatus(ctx);
+    notify(ctx, "Connection lost — all reconnection attempts failed", "error");
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
