@@ -2,7 +2,10 @@ import { createRequire } from "node:module";
 
 const _require = createRequire(import.meta.url);
 
-const CBOR_AVAILABLE = (() => {
+/** Maximum allowed frame payload size in bytes (16 MB). */
+export const MAX_FRAME_SIZE = 16 * 1024 * 1024;
+
+export const CBOR_AVAILABLE = (() => {
   try {
     _require.resolve("cbor-x");
     return true;
@@ -46,10 +49,11 @@ export function encodeFrame(payload: Buffer): Buffer {
  * Returns null if buffer does not contain a complete frame.
  * Returns the payload plus how many bytes were consumed.
  */
-export function decodeFrame(buffer: Buffer): DecodeResult | null {
+export function decodeFrame(buffer: Buffer, maxSize = MAX_FRAME_SIZE): DecodeResult | null {
   if (buffer.length < 4) return null;
 
   const length = buffer.readUint32BE(0);
+  if (length > maxSize) throw new Error(`Frame too large: ${length} > ${maxSize}`);
   if (buffer.length < 4 + length) return null;
 
   const payload = buffer.subarray(4, 4 + length);

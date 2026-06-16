@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeFrame, decodeFrame, encodeMessage, decodeMessage, negotiateEncoding, DecodeResult } from "../../.pi/extensions/piroh/lib/protocol";
+import { encodeFrame, decodeFrame, encodeMessage, decodeMessage, negotiateEncoding, DecodeResult, MAX_FRAME_SIZE, CBOR_AVAILABLE } from "../../.pi/extensions/piroh/lib/protocol";
 
 describe("protocol", () => {
   it("encodes a frame with 4-byte big-endian length prefix", () => {
@@ -50,6 +50,39 @@ describe("protocol", () => {
     const encoded = encodeMessage(obj, "cbor");
     const decoded = decodeMessage(encoded, "cbor");
     expect(decoded).toEqual(obj);
+
+    // Verify CBOR bytes are actually used (not JSON fallback)
+    if (CBOR_AVAILABLE) {
+      const jsonEncoded = encodeMessage(obj, "json");
+      expect(Buffer.from(encoded).equals(Buffer.from(jsonEncoded))).toBe(false);
+    }
+  });
+
+  it("encodes and decodes round-trip with JSON", () => {
+    const obj = { op: "hello", version: 0, encoding: "json", lastSeq: 42 };
+    const encoded = encodeMessage(obj, "json");
+    // Verify the encoded output is parseable JSON
+    const asString = Buffer.from(encoded).toString("utf-8");
+    expect(() => JSON.parse(asString)).not.toThrow();
+
+    const decoded = decodeMessage(encoded, "json");
+    expect(decoded).toEqual(obj);
+  });
+
+  it("throws when decoding a frame exceeding max size", () => {
+    const header = Buffer.alloc(4);
+    new DataView(header.buffer, header.byteOffset, 4).setUint32(0, MAX_FRAME_SIZE + 1, false);
+    // Buffer is big enough to hold the header but payload exceeds max size
+    const oversized = Buffer.concat([header, Buffer.alloc(4)]);
+    expect(() => decodeFrame(oversized)).toThrow("Frame too large");
+
+    // Edge case: exactly at max size should succeed (if payload present)
+    const justRightHeader = Buffer.alloc(4);
+    new DataView(justRightHeader.buffer, justRightHeader.byteOffset, 4).setUint32(0, MAX_FRAME_SIZE, false);
+    const justRight = Buffer.concat([justRightHeader, Buffer.alloc(MAX_FRAME_SIZE)]);
+    const result = decodeFrame(justRight);
+    expect(result).not.toBeNull();
+    expect((result as DecodeResult).payload.length).toBe(MAX_FRAME_SIZE);
   });
 
   it("negotiates encoding: host supports CBOR", () => {
