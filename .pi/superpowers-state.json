@@ -36,11 +36,11 @@
   },
   "debug": {
     "active": false,
-    "investigated": false,
+    "investigated": true,
     "fixAttempts": 0
   },
   "verification": {
-    "verified": true,
+    "verified": false,
     "verificationWaived": false
   }
 }

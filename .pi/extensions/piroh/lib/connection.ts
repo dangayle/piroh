@@ -180,6 +180,13 @@ function create031Handle(endpoint031: Endpoint031, iroh031: Iroh031): NodeHandle
     },
 
     async connectTo(remoteId: string): Promise<RawConnection> {
+      // Validate node ID format to avoid native panics on invalid input.
+      // iroh 0.31 node IDs are 64-char hex strings (32 bytes).
+      if (!/^[0-9a-f]{64}$/i.test(remoteId)) {
+        throw new Error(
+          `Invalid node ID: "${remoteId}". Expected a 64-character hex string.`
+        );
+      }
       return endpoint031.connect({ nodeId: remoteId }, PIROH_ALPN);
     },
 
@@ -255,6 +262,14 @@ function create100Handle(endpoint100: Endpoint100): NodeHandle {
     },
 
     async connectTo(remoteId: string): Promise<RawConnection> {
+      // Validate node ID format defensively — prevents panics on garbage input.
+      // 1.0 EndpointId.fromString would error on malformed input, but we check
+      // early for a clearer error message.
+      if (!/^[0-9a-f]{64}$/i.test(remoteId)) {
+        throw new Error(
+          `Invalid node ID: "${remoteId}". Expected a 64-character hex string.`
+        );
+      }
       const addr = new EndpointAddr(EndpointId.fromString(remoteId));
       return endpoint100.connect(addr, alpnBytes());
     },
