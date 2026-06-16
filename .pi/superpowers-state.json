@@ -27,16 +27,14 @@
     }
   },
   "tdd": {
-    "phase": "red-pending",
-    "testFiles": [
-      "/Users/dangayle/src/piroh/__tests__/piroh/integration.test.ts"
-    ],
+    "phase": "idle",
+    "testFiles": [],
     "sourceFiles": [],
-    "redVerificationPending": true
+    "redVerificationPending": false
   },
   "debug": {
     "active": false,
-    "investigated": true,
+    "investigated": false,
     "fixAttempts": 0
   },
   "verification": {

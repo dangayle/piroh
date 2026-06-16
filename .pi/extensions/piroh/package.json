@@ -1,13 +1,5 @@
 {
-  "name": "piroh",
+  "name": "piroh-extension",
   "private": true,
-  "dependencies": {
-    "@number0/iroh": "0.31.0",
-    "cbor-x": "^1.6.0"
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
-  }
+  "description": "Piroh Pi extension — bundled in piroh root package"
 }

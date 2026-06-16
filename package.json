@@ -1,18 +1,20 @@
 {
   "name": "piroh",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "Remote Pi sessions over Iroh",
+  "private": true,
+  "keywords": ["pi-package"],
   "type": "module",
+  "dependencies": {
+    "@number0/iroh": "0.31.0",
+    "cbor-x": "^1.6.0"
+  },
   "devDependencies": {
     "@types/node": "^25.9.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
+  },
+  "pi": {
+    "extensions": ["./.pi/extensions/piroh/index.ts"]
   }
 }
