@@ -27,17 +27,16 @@
     }
   },
   "tdd": {
-    "phase": "idle",
-    "testFiles": [],
-    "sourceFiles": [
-      "/Users/dangayle/src/piroh/.pi/extensions/piroh/lib/connection.ts",
-      "/Users/dangayle/src/piroh/.pi/extensions/piroh/index.ts"
+    "phase": "red-pending",
+    "testFiles": [
+      "/Users/dangayle/src/piroh/__tests__/piroh/integration.test.ts"
     ],
-    "redVerificationPending": false
+    "sourceFiles": [],
+    "redVerificationPending": true
   },
   "debug": {
     "active": false,
-    "investigated": false,
+    "investigated": true,
     "fixAttempts": 0
   },
   "verification": {

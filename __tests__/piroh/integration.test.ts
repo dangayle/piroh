@@ -14,6 +14,9 @@ import { buildSnapshot, type WireEntry, type SnapshotMessage } from "../../.pi/e
 import {
   ConnectionState,
   backoffDelay,
+  createEndpoint,
+  loadOrGenerateKey,
+  type NodeHandle,
 } from "../../.pi/extensions/piroh/lib/connection";
 
 // ---------------------------------------------------------------------------
@@ -512,5 +515,74 @@ describe("integration", () => {
       expect(clientSnapshot.entries[1].content).toBe("Second message");
       expect(clientSnapshot.seq).toBe(2);
     });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Real iroh integration — host / client nodes, address sharing, handshake
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("iroh host/client connection", () => {
+    const TIMEOUT = 15_000;
+
+    it(
+      "connects and completes full handshake (via adapter)",
+      { timeout: TIMEOUT },
+      async () => {
+        const host = await createEndpoint(loadOrGenerateKey());
+        const client = await createEndpoint(loadOrGenerateKey());
+        const addressBlob = await host.getAddress();
+        expect(host.nodeId()).toMatch(/^[0-9a-f]{64}$/i);
+
+        // Connect — acceptConnection queues, connectTo triggers it
+        const hostAccept = host.acceptConnection();
+        const cc = await client.connectTo(addressBlob);
+        const hc = await hostAccept;
+
+        // 0.31 quirk: acceptBi blocks until data arrives on the stream.
+        // Open + write on client first, then accept on host.
+        const cb = await (cc as { openBi(): Promise<{ send: { writeAll(b: Uint8Array): Promise<void>; finish(): Promise<void> }; recv: { readExact(b: Uint8Array): Promise<void> } }> }).openBi();
+        await cb.send.writeAll(encodeFrame(encodeMessage({ op: "hello", version: 0, encoding: "json", lastSeq: 0 }, "json")));
+
+        const hb = await (hc as { acceptBi(): Promise<{ send: { writeAll(b: Uint8Array): Promise<void> }; recv: { readExact(b: Uint8Array): Promise<void> } }> }).acceptBi();
+
+        // Host reads hello
+        const hdr = Buffer.alloc(4);
+        await hb.recv.readExact(hdr);
+        await hb.recv.readExact(Buffer.alloc(hdr.readUint32BE(0)));
+
+        // Host responds with ack + snapshot
+        await hb.send.writeAll(Buffer.concat([
+          encodeFrame(encodeMessage({ op: "hello-ack", encoding: "json" }, "json")),
+          encodeFrame(encodeMessage({ op: "snapshot", entries: [], seq: 0 }, "json")),
+        ]));
+
+        // Client reads ack + snapshot (two frames, one buffer)
+        const ch = Buffer.alloc(4);
+        await cb.recv.readExact(ch);
+        await cb.recv.readExact(Buffer.alloc(ch.readUint32BE(0)));
+        const sh = Buffer.alloc(4);
+        await cb.recv.readExact(sh);
+        const sp = Buffer.alloc(sh.readUint32BE(0));
+        await cb.recv.readExact(sp);
+        expect(decodeMessage(sp, "json")).toMatchObject({ op: "snapshot", entries: [], seq: 0 });
+
+        await cb.send.finish();
+        await host.destroy();
+        await client.destroy();
+      },
+      TIMEOUT
+    );
+
+    it(
+      "connectTo rejects invalid address with clear error",
+      async () => {
+        const tmp = await createEndpoint(loadOrGenerateKey());
+        try {
+          await expect(tmp.connectTo("not-a-valid-id")).rejects.toThrow(/Invalid/);
+        } finally {
+          await tmp.destroy();
+        }
+      }
+    );
   });
 });
