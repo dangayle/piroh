@@ -1,11 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   encodeFrame,
   decodeFrame,
   encodeMessage,
   decodeMessage,
   negotiateEncoding,
-  MAX_FRAME_SIZE,
   CBOR_AVAILABLE,
   type HelloMessage,
   type HelloAckMessage,
@@ -16,47 +15,6 @@ import {
   ConnectionState,
   backoffDelay,
 } from "../../.pi/extensions/piroh/lib/connection";
-
-// ---------------------------------------------------------------------------
-// Helper: Build a mock bidirectional stream that stores sent frames and
-//         returns preconfigured receive data.
-// ---------------------------------------------------------------------------
-
-interface MockBiStream {
-  sentFrames: Buffer[];
-  send: ReturnType<typeof vi.fn>;
-  recv: ReturnType<typeof vi.fn>;
-  reset: () => void;
-}
-
-function createMockStream(recvData?: Buffer[]): MockBiStream {
-  const sentFrames: Buffer[] = [];
-  const send = vi.fn().mockReturnValue({
-    writeAll: vi.fn(async (data: Buffer) => {
-      sentFrames.push(data);
-    }),
-    finish: vi.fn(),
-  });
-
-  let recvIndex = 0;
-  const recv = vi.fn().mockImplementation(async (_n: number) => {
-    if (recvData && recvIndex < recvData.length) {
-      return recvData[recvIndex++];
-    }
-    // Return empty buffer when no more data
-    return Buffer.alloc(0);
-  });
-
-  return {
-    sentFrames,
-    send,
-    recv,
-    reset: () => {
-      sentFrames.length = 0;
-      recvIndex = 0;
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Helper: create a WireEntry with reasonable defaults
@@ -231,7 +189,7 @@ describe("integration", () => {
 
     it("handles empty snapshot (no new entries)", () => {
       const entries = [makeEntry("1", "Only")];
-      const snapshot = buildSnapshot(entries, 1); // already seen both
+      const snapshot = buildSnapshot(entries, 1); // already seen the single entry
       expect(snapshot.entries).toHaveLength(0);
       expect(snapshot.seq).toBe(1);
 
@@ -374,76 +332,11 @@ describe("integration", () => {
     });
   });
 
-  describe("disconnect cleanup", () => {
-    it("resets mode and suppressInput on disconnect", () => {
-      // Simulate state as it would be during active client session
-      const state = {
-        mode: "client" as const,
-        suppressInput: true,
-        stream: "mock-stream" as unknown,
-        connection: "mock-connection" as unknown,
-        connState: new ConnectionState(),
-      };
-      state.connState.transition("connecting");
-      state.connState.transition("connected");
-
-      // Simulate disconnect handler logic (from index.ts /iroh-disconnect)
-      state.stream = null;
-      state.connection = null;
-      state.mode = "idle";
-      state.suppressInput = false;
-      state.connState.transition("idle");
-
-      // Verify cleanup
-      expect(state.mode).toBe("idle");
-      expect(state.suppressInput).toBe(false);
-      expect(state.stream).toBeNull();
-      expect(state.connection).toBeNull();
-      expect(state.connState.current).toBe("idle");
-    });
-
-    it("preserves endpoint and key for reconnection", () => {
-      // Simulate state after disconnect where only stream/connection are cleaned
-      const state = {
-        endpoint: "mock-endpoint" as unknown,
-        key: new Uint8Array(32) as Uint8Array,
-        mode: "idle" as const,
-        suppressInput: false,
-        stream: null as unknown,
-        connection: null as unknown,
-        remoteId: "abc123" as string | null,
-        connState: new ConnectionState(),
-      };
-
-      // Verify reusable state is preserved
-      expect(state.endpoint).not.toBeNull();
-      expect(state.key).not.toBeNull();
-      expect(state.key!.byteLength).toBe(32);
-      expect(state.remoteId).toBe("abc123");
-
-      // Verify connection-specific state is cleaned
-      expect(state.stream).toBeNull();
-      expect(state.connection).toBeNull();
-      expect(state.suppressInput).toBe(false);
-    });
-
-    it("gracefully handles disconnect with no active stream", () => {
-      // Edge case: disconnect called when already idle
-      const state = {
-        mode: "idle" as const,
-        suppressInput: false,
-        stream: null as unknown,
-        connection: null as unknown,
-        connState: new ConnectionState(),
-      };
-
-      // Simulate calling /iroh-disconnect when idle (no-op)
-      state.connState.transition("idle");
-      expect(state.mode).toBe("idle");
-      expect(state.stream).toBeNull();
-      expect(state.connection).toBeNull();
-    });
-  });
+  // Disconnect cleanup tests removed.
+  // They duplicated source logic by mocking state transitions instead of
+  // testing the real /iroh-disconnect handler. The real handler requires Pi
+  // ExtensionContext mocking which isn't practical for unit tests. Cleanup
+  // behavior is verified manually as part of end-to-end validation.
 
   describe("retry counting and backoff integration", () => {
     it("increments retry count and applies correct backoff delay for each attempt", () => {
